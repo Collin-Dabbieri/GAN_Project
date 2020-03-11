@@ -78,6 +78,12 @@ def build_model(args):
 
 def generate_fname(args):
     
+    if args.exp_index==-1:
+        exp_str=''
+        
+    elif args.exp_index!=-1:
+        exp_str='exp_'+str(args.exp_index)+'_'
+    
     lstm_str='lstm_'
     for i in range(len(args.LSTM)):
         lstm_str+=str(args.LSTM[i])+'_'
@@ -89,7 +95,12 @@ def generate_fname(args):
     l2_str='l2_'+str(args.l2)+'_'
     dropout_str='drop_'+str(args.dropout)
     
-    fbase=lstm_str+hidden_str+l2_str+dropout_str
+    
+    fbase=exp_str+lstm_str+hidden_str+l2_str+dropout_str
+    
+    if args.verbose>0:
+        print('Filename Base is '+fbase)
+        
     return fbase
 
 def augment_args(args):
