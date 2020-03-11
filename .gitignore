@@ -1,5 +1,5 @@
 *.pkl
-./MIDI_files/
+/home/collindabbieri/Documents/AdvancedMachineLearning/Project/MIDI_files/
 ./LSTM/results/
 ./LSTM/Generated_MIDIs/
 *.pyo
