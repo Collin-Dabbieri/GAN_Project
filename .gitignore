@@ -1,7 +1,7 @@
 *.pkl
-/home/collindabbieri/Documents/AdvancedMachineLearning/Project/MIDI_files/
-./LSTM/results/
-./LSTM/Generated_MIDIs/
+MIDI_files/
+LSTM/results/
+LSTM/Generated_MIDIs/
 *.pyo
 *.pyc
 *~
