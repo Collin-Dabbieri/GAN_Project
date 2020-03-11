@@ -1,0 +1,8 @@
+*.pkl
+./MIDI_files/
+./LSTM/results/
+./LSTM/Generated_MIDIs/
+*.pyo
+*.pyc
+*~
+.ipynb_checkpoints/
