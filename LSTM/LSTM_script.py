@@ -145,7 +145,8 @@ def execute_exp(args):
     
     ins_train,outs_train,ins_validation,outs_validation=load_data(args)
     
-    model=build_model(args)
+
+        
     
     # Callbacks
     early_stopping_cb = keras.callbacks.EarlyStopping(patience=args.patience,
@@ -156,14 +157,91 @@ def execute_exp(args):
     filepath=args.results+fbase+"_checkpoint_weights.hdf5"
     checkpoint = ModelCheckpoint(filepath, monitor='val_categorical_accuracy', verbose=args.verbose, save_best_only=True, mode='max')
     
-    history=model.fit(ins_train, 
-                  outs_train,
-                  validation_data=(ins_validation, outs_validation),
-                  use_multiprocessing=True,
-                  epochs=args.epochs, 
-                  batch_size=args.batch_size,
-                  callbacks=[early_stopping_cb,checkpoint],
-                  verbose=args.verbose)
+    
+    if args.wide_net==1:
+        #do a small train with 5 models, then pick the best one and train on it for much longer
+        model1=build_model(args)
+        model2=build_model(args)
+        model3=build_model(args)
+        model4=build_model(args)
+        
+        history1=model1.fit(ins_train, 
+                            outs_train,
+                            validation_data=(ins_validation, outs_validation),
+                            use_multiprocessing=True,
+                            epochs=args.short_train, 
+                            batch_size=args.batch_size,
+                            callbacks=[early_stopping_cb,checkpoint],
+                            verbose=args.verbose)
+        history2=model2.fit(ins_train, 
+                            outs_train,
+                            validation_data=(ins_validation, outs_validation),
+                            use_multiprocessing=True,
+                            epochs=args.short_train, 
+                            batch_size=args.batch_size,
+                            callbacks=[early_stopping_cb,checkpoint],
+                            verbose=args.verbose)
+        history3=model3.fit(ins_train, 
+                            outs_train,
+                            validation_data=(ins_validation, outs_validation),
+                            use_multiprocessing=True,
+                            epochs=args.short_train, 
+                            batch_size=args.batch_size,
+                            callbacks=[early_stopping_cb,checkpoint],
+                            verbose=args.verbose)
+        history4=model4.fit(ins_train, 
+                            outs_train,
+                            validation_data=(ins_validation, outs_validation),
+                            use_multiprocessing=True,
+                            epochs=args.short_train, 
+                            batch_size=args.batch_size,
+                            callbacks=[early_stopping_cb,checkpoint],
+                            verbose=args.verbose)
+        history5=model5.fit(ins_train, 
+                            outs_train,
+                            validation_data=(ins_validation, outs_validation),
+                            use_multiprocessing=True,
+                            epochs=args.short_train, 
+                            batch_size=args.batch_size,
+                            callbacks=[early_stopping_cb,checkpoint],
+                            verbose=args.verbose)
+        
+        
+        #pick the model with the lowest loss after short train
+        models=[model1,model2,model3,model4,model5]
+        histories=[history1,history2,history3,history4,history5]
+        
+        lowest_loss=np.inf
+        for i in range(5):
+            model_temp=models[i]
+            history_temp=histories[i]
+            loss=history_temp.history['loss'][-1] #grab the last loss value
+            
+            if loss<lowest_loss:
+                idx_best=i
+                lowest_loss=loss
+        #train the best model for much longer        
+        model=models[idx_best]
+        history=model.fit(ins_train, 
+                          outs_train,
+                          validation_data=(ins_validation, outs_validation),
+                          use_multiprocessing=True,
+                          epochs=args.epochs, 
+                          batch_size=args.batch_size,
+                          callbacks=[early_stopping_cb,checkpoint],
+                          verbose=args.verbose)
+        
+    elif args.wide_net==0:
+        model=build_model(args)
+    
+        history=model.fit(ins_train, 
+                          outs_train,
+                          validation_data=(ins_validation, outs_validation),
+                          use_multiprocessing=True,
+                          epochs=args.epochs, 
+                          batch_size=args.batch_size,
+                          callbacks=[early_stopping_cb,checkpoint],
+                          verbose=args.verbose)
     
     #Generate log data
     results={}
@@ -205,13 +283,21 @@ def create_parser():
     parser.add_argument('-exp_index',type=int,default=-1,help='experiment index for augment args')
     parser.add_argument('-results',type=str,default='./results/',help='directory for storing results')
     parser.add_argument('-verbose',type=int,default=1,help='verbosity')
+    parser.add_argument('-wide_net',type=int,default=0,help='wide net model training')
+    parser.add_argument('-short_train',type=int,default=20,help='number of epochs for wide net training')
     return parser
 
+
+def check_args(args):
+    
+    if args.wide_net!=0. and args.wide_net!=1.:
+        raise ValueError("wide_net must be either 0 or 1")
 
 #################################################################
 if __name__ == "__main__":
     parser = create_parser()
     args = parser.parse_args()
+    check_args(args)
     execute_exp(args)
     
 
