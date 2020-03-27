@@ -7,3 +7,7 @@ LSTM/Generated_MIDIs/
 *~
 .ipynb_checkpoints/
 Final_Fantasy/
+ConvGan/plots/
+ConvGan/plots_linear/
+ConvGan/results/
+ConvGan/results_linear/
