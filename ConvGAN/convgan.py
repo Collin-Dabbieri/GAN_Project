@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 import tensorflow as tf
 import pickle
 from tensorflow.keras.layers import InputLayer, Dense, LSTM, Dropout, Activation, Conv2D, Flatten, Reshape, Conv2DTranspose
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Sequential, load_model
 import argparse
 
 FONTSIZE=18
@@ -34,45 +34,54 @@ def build_discriminator(args):
     -dropout
     -verbose
     -lrate
+    -load_pretrained
+    -pretrained_disc_name
     '''
-    model=Sequential()
-    input_shape=(args.image_height,args.image_width,args.num_channels)
+    
+    if args.load_pretrained==0:
+        model=Sequential()
+        input_shape=(args.image_height,args.image_width,args.num_channels)
 
-    for i in range(len(args.filters)):
+        for i in range(len(args.filters)):
 
-        if i==0:
-            model.add(Conv2D(args.filters[i],
-                             strides=(args.disc_h_strides[i],args.disc_w_strides[i]),
-                             input_shape=input_shape,
-                             activation=args.activation,
-                             kernel_size=(args.disc_h_kernels[i],args.disc_w_kernels[i]),
-                             padding='same',
-                             use_bias=True,
-                             kernel_initializer='truncated_normal',
-                             bias_initializer='zeros',
-                             name='DC'+str(i),
-                             kernel_regularizer=tf.keras.regularizers.l2(args.l2)
-                             ))
-        else:
-            model.add(Conv2D(args.filters[i],
-                             strides=(args.disc_h_strides[i],args.disc_w_strides[i]),
-                             activation=args.activation,
-                             kernel_size=(args.disc_h_kernels[i],args.disc_w_kernels[i]),
-                             padding='same',
-                             use_bias=True,
-                             kernel_initializer='truncated_normal',
-                             bias_initializer='zeros',
-                             name='DC'+str(i),
-                             kernel_regularizer=tf.keras.regularizers.l2(args.l2)
-                             ))
-        model.add(Dropout(args.dropout))
+            if i==0:
+                model.add(Conv2D(args.filters[i],
+                                 strides=(args.disc_h_strides[i],args.disc_w_strides[i]),
+                                 input_shape=input_shape,
+                                 activation=args.activation,
+                                 kernel_size=(args.disc_h_kernels[i],args.disc_w_kernels[i]),
+                                 padding='same',
+                                 use_bias=True,
+                                 kernel_initializer='truncated_normal',
+                                 bias_initializer='zeros',
+                                 name='DC'+str(i),
+                                 kernel_regularizer=tf.keras.regularizers.l2(args.l2)
+                                 ))
+            else:
+                model.add(Conv2D(args.filters[i],
+                                 strides=(args.disc_h_strides[i],args.disc_w_strides[i]),
+                                 activation=args.activation,
+                                 kernel_size=(args.disc_h_kernels[i],args.disc_w_kernels[i]),
+                                 padding='same',
+                                 use_bias=True,
+                                 kernel_initializer='truncated_normal',
+                                 bias_initializer='zeros',
+                                 name='DC'+str(i),
+                                 kernel_regularizer=tf.keras.regularizers.l2(args.l2)
+                                 ))
+            model.add(Dropout(args.dropout))
 
-    model.add(Flatten())
-    model.add(Dense(1,activation='sigmoid'))
+        model.add(Flatten())
+        model.add(Dense(1,activation='sigmoid'))
+        opt=tf.keras.optimizers.Adam(lr=args.lrate,beta_1=0.9,beta_2=0.999,epsilon=None,decay=0.0,amsgrad=False)
+        model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+        
+    elif args.load_pretrained==1:
+        model=load_model(args.pretrained_disc_name)
+        
     if args.verbose>0:
         print(model.summary())
-    opt=tf.keras.optimizers.Adam(lr=args.lrate,beta_1=0.9,beta_2=0.999,epsilon=None,decay=0.0,amsgrad=False)
-    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+
 
     return model
 
@@ -91,30 +100,37 @@ def build_generator(args):
     -gen_w_kernels
     -gen_h_strides list of strides for generator
     -gen_w_strides
+    -load_pretrained
+    -pretrained_gen_name
     '''
-    #latent space is a vector of length 100
-    model=Sequential()
-    n_nodes=int( int(args.image_height/args.gen_starting_fraction)*int(args.image_width/args.gen_starting_fraction)*args.generator_feature_space  )
-    model.add(Dense(n_nodes,
-                     input_dim=args.latent_dim,
-                     activation=args.activation,
-                     ))
-    
-    model.add(Reshape((int(args.image_height/args.gen_starting_fraction),int(args.image_width/args.gen_starting_fraction),args.generator_feature_space)))
-    
-    for i in range(len(args.gen_h_strides)):
+    if args.load_pretrained==0:
+        #latent space is a vector of length 100
+        model=Sequential()
+        n_nodes=int( int(args.image_height/args.gen_starting_fraction)*int(args.image_width/args.gen_starting_fraction)*args.generator_feature_space  )
+        model.add(Dense(n_nodes,
+                         input_dim=args.latent_dim,
+                         activation=args.activation,
+                         ))
+
+        model.add(Reshape((int(args.image_height/args.gen_starting_fraction),int(args.image_width/args.gen_starting_fraction),args.generator_feature_space)))
+
+        for i in range(len(args.gen_h_strides)):
+
+            model.add(Conv2DTranspose(args.generator_feature_space,
+                                      kernel_size=(args.gen_h_kernels[i],args.gen_w_kernels[i]),
+                                      strides=(args.gen_h_strides[i],args.gen_w_strides[i]),
+                                      padding='same',
+                                      activation=args.activation
+                                      ))
+
+        model.add(Conv2D(args.num_channels, (7,7), activation='sigmoid', padding='same'))
+            
+    elif args.load_pretrained==1:
+        model=load_model(args.pretrained_gen_name)
         
-        model.add(Conv2DTranspose(args.generator_feature_space,
-                                  kernel_size=(args.gen_h_kernels[i],args.gen_w_kernels[i]),
-                                  strides=(args.gen_h_strides[i],args.gen_w_strides[i]),
-                                  padding='same',
-                                  activation=args.activation
-                                  ))
-    
-    model.add(Conv2D(args.num_channels, (7,7), activation='sigmoid', padding='same'))
-    
     if args.verbose>0:
         print(model.summary())
+        
 
     return model
     
@@ -228,7 +244,14 @@ def generate_fname(args):
     l2_str='l2'+str(args.l2)+'_'
     dropout_str='drop'+str(args.dropout)
     
-    fbase='ConvGan_'+args.mapping+'_'+gen_strides_str+disc_strides_str
+    feature_space_str='gen_feature_'+str(args.generator_feature_space)+'_'
+    
+    disc_str='disc_filters_'
+    for i in args.filters:
+        disc_str+=str(i)
+        disc_str+='_'
+    
+    fbase='ConvGan_'+args.mapping+'_'+feature_space_str+disc_str+gen_strides_str+disc_strides_str
     
     return fbase
     
@@ -242,6 +265,7 @@ def execute_exp(args):
     -verbose
     -checkpoints (list of epoch numbers where you want to generate plots and output the model)
     -gen_boost_factor multiplicative for extra generator training
+    getting rid of gen_boost_factor and electing to instead boost either the generator or discriminator depending on which has higher loss
     '''
     
     D=build_discriminator(args)
@@ -251,8 +275,11 @@ def execute_exp(args):
     
     ins=build_training_data(args)
     
-    d_losses=[]
-    g_losses=[]
+    d_losses=[] #these will be nested lists that contain the time and loss [[time0,loss0],[time0,loss1],[time1,loss2],... ]
+    g_losses=[] #this is necessary because our disc_boost and gen_boost values will be changing over time, but we want to be able to plot them properly
+    
+    disc_boosts=[] #just tracking the boost factors at each batch
+    gen_boosts=[]
     
     accs_real=[]
     accs_fake=[]
@@ -262,20 +289,59 @@ def execute_exp(args):
     
     xinput=generate_latent_space(25,args.latent_dim) #generate a single latent space that will be used for making plots during training
     
+    count=-1
     for i in range(args.n_epochs):
         for j in range(batch_per_epoch):
-            X_real, y_real = generate_real_samples(ins,half_batch)
-            X_fake, y_fake = generate_fake_samples(G,half_batch,args.latent_dim)
-            X, y = np.vstack((X_real, X_fake)), np.vstack((y_real, y_fake))
-            d_loss, _ = D.train_on_batch(X, y)
-            d_losses.append(d_loss)
+            count+=1
             
-            for k in range(args.gen_boost_factor):
+            #if loading pretrained weights, add starting boost factor from end of last run so loss doesn't immediately explode
             
+            
+            #determine the boost factor for either the generator or discriminator depending on which has a higher recent loss
+            if count>=10:
+                g_len=len(g_losses)
+                g_idxs=np.arange(g_len-10,g_len,step=1,dtype=np.int32)
+                g_loss_avg=np.average([g_losses[i][1] for i in g_idxs])  #average of last 10 loss values
+                
+                d_len=len(d_losses)
+                d_idxs=np.arange(d_len-10,d_len,step=1,dtype=np.int32)
+                d_loss_avg=np.average([d_losses[i][1] for i in d_idxs])  #average of last 10 loss values
+                
+                if g_loss_avg>d_loss_avg:
+                    #discriminator is winning
+                    disc_boost=int(1)
+                    
+                    if d_loss_avg<=0.1: #prevent huge boost values when one loss zeros out
+                        gen_boost=int(10)
+                    elif d_loss_avg>0.1:
+                        gen_boost=int(np.round(g_loss_avg/d_loss_avg,decimals=0))
+                elif d_loss_avg>g_loss_avg:
+                    #generator is winning
+                    gen_boost=int(1)
+                    
+                    if g_loss_avg<=0.1: #prevent huge boost values when one loss zeros out
+                        disc_boost=int(10)
+                    elif g_loss_avg>0.1:
+                        disc_boost=int(np.round(d_loss_avg/g_loss_avg,decimals=0))
+                
+            elif count<10:
+                gen_boost=int(1)
+                disc_boost=int(1)
+                
+            disc_boosts.append(disc_boost)
+            gen_boosts.append(gen_boost)
+            
+            for boost in range(disc_boost):
+                X_real, y_real = generate_real_samples(ins,half_batch)
+                X_fake, y_fake = generate_fake_samples(G,half_batch,args.latent_dim)
+                X, y = np.vstack((X_real, X_fake)), np.vstack((y_real, y_fake))
+                d_loss, _ = D.train_on_batch(X, y)
+                d_losses.append([count,d_loss]) #adding the count here for proper loss plots
+            for boost in range(gen_boost):
                 X_gan = generate_latent_space(args.n_batch,args.latent_dim)
                 y_gan = np.ones((args.n_batch, 1))
                 g_loss = C.train_on_batch(X_gan, y_gan)
-                g_losses.append(g_loss)
+                g_losses.append([count,g_loss])
             
             if args.verbose>0:
                 print('>%d, %d/%d, d=%.3f, g=%.3f' % (i+1, j+1, batch_per_epoch, d_loss, g_loss))
@@ -288,12 +354,17 @@ def execute_exp(args):
             
         if i+1 in args.checkpoints:
             # save the generator model tile file
-            filename = './results/%s_epoch_%03d.h5' % (fbase,i+1)
+            filename = './results/%s_G_epoch_%03d.h5' % (fbase,i+1)
             G.save(filename)
+            
+            filename = './results/%s_D_epoch_%03d.h5' % (fbase,i+1)
+            D.save(filename)
             
             #write out results at each checkpoint too
             results={}
             results['args']=args
+            results['disc_boost']=disc_boosts
+            results['gen_boost']=gen_boosts
             results['d_loss']=d_losses
             results['g_loss']=g_losses
             results['acc_real']=accs_real
@@ -336,9 +407,11 @@ def create_parser():
     parser.add_argument('-n_batch',type=int,default=64,help='number of samples per batch')
     parser.add_argument('-n_epochs',type=int,default=500,help='number of training epochs')
     parser.add_argument('-checkpoints',type=int,nargs='+',default=[1,10,100,250,500],help='list of epochs for saving model checkpoints')
-    parser.add_argument('-mapping',type=str,default='linear',help='mapping of pitch to the y-axis (linear or fifths)')
+    parser.add_argument('-mapping',type=str,default='fifths',help='mapping of pitch to the y-axis (linear or fifths)')
     parser.add_argument('-plot_every',type=int,default=1,help='generate plots after every X epochs')
-    parser.add_argument('-gen_boost_factor',type=int,default=1,help='multiplicative for extra generator training (2 means train generator twice as long as discriminator)')
+    parser.add_argument('-load_pretrained',type=int,default=0,help='1 if loading in pretrained models, 0 if not')
+    parser.add_argument('-pretrained_gen_name',type=str,default='ConvGan_fifths_Gstrides_12_2_Dstrides_12_2_G_epoch_150.h5',help='name of h5 file for generator')
+    parser.add_argument('-pretrained_disc_name',type=str,default='ConvGan_fifths_Gstrides_12_2_Dstrides_12_2_D_epoch_150.h5',help='name of h5 file for discriminator')
     
     return parser
 
@@ -373,6 +446,12 @@ def check_args(args):
     assert(len(args.disc_h_strides)==len(args.disc_w_strides)),"Discriminator height and width stride vectors must be same length"
     assert(len(args.disc_h_kernels)==len(args.disc_w_kernels)),"Discriminator height and width kernel vectors must be same length"
     assert(len(args.disc_h_strides)==len(args.disc_h_kernels)),"Discriminator stride vectors must be same length as kernel vectors"
+    
+    
+    #check that load_pretrained is 0 or 1
+    if args.load_pretrained!=0:
+        if args.load_pretrained!=1:
+            raise ValueError('args.load_pretrained must be 0 or 1')
     
 #################################################################
 if __name__ == "__main__":
