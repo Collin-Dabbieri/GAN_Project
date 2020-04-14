@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import tensorflow as tf
 import pickle
-from tensorflow.keras.layers import InputLayer, Dense, LSTM, Dropout, Activation, Conv2D, Flatten, Reshape, Conv2DTranspose
+from tensorflow.keras.layers import InputLayer, Dense, LSTM, Dropout, Activation, Conv2D, Flatten, Reshape, Conv2DTranspose,MaxPooling2D
 from tensorflow.keras.models import Sequential, load_model
 import argparse
 
@@ -70,15 +70,28 @@ def build_discriminator(args):
                                  kernel_regularizer=tf.keras.regularizers.l2(args.l2)
                                  ))
             model.add(Dropout(args.dropout))
+            
+            model.add(MaxPooling2D(pool_size=(2,2),
+                                   strides=(2,2),
+                                   padding='valid'))
 
         model.add(Flatten())
+        
+        for i in range(len(args.hidden)):
+            
+            model.add(Dense(args.hidden[i],
+                            activation=args.activation,
+                            kernel_regularizer=tf.keras.regularizers.l2(args.l2)))
+            model.add(Dropout(args.dropout))
+        
         model.add(Dense(1,activation='sigmoid'))
         opt=tf.keras.optimizers.Adam(lr=args.lrate,beta_1=0.9,beta_2=0.999,epsilon=None,decay=0.0,amsgrad=False)
         model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
         
     elif args.load_pretrained==1:
         model=load_model(args.pretrained_disc_name)
-        
+        opt=tf.keras.optimizers.Adam(lr=args.lrate,beta_1=0.9,beta_2=0.999,epsilon=None,decay=0.0,amsgrad=False)
+        model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
     if args.verbose>0:
         print(model.summary())
 
@@ -103,13 +116,34 @@ def build_generator(args):
     -load_pretrained
     -pretrained_gen_name
     '''
-    if args.load_pretrained==0:
+    # the prior method was to start with a small square image and then use Conv2DTranspose to upsample to a large square image
+    # we also want to be able to stride by an octave in the y direction
+    # these requirement force us to have one layer with strides (12,2) and one with strides (2,12) so we can start square and end square
+    # if we allow ourselves to start with a nonsquare small image we can use strides of (3,12) and (5,12) so we can always stride by an octave in the y direction
+    if args.gen_nonsquare_start==1:
+        model=Sequential()
+        n_nodes=int(args.gen_starting_h*args.gen_starting_w*args.generator_feature_space)
+        model.add(Dense(n_nodes,
+                        input_dim=args.latent_dim,
+                        activation=args.activation))
+        model.add(Reshape((args.gen_starting_h,args.gen_starting_w,args.generator_feature_space)))
+        
+        for i in range(len(args.gen_h_strides)):
+            
+            model.add(Conv2DTranspose(args.generator_feature_space,
+                                      kernel_size=(args.gen_h_kernels[i],args.gen_w_kernels[i]),
+                                      strides=(args.gen_h_strides[i],args.gen_w_strides[i]),
+                                      padding='same',
+                                      activation=args.activation))
+        model.add(Conv2D(args.num_channels,(7,7),activation='sigmoid',padding='same'))
+            
+    elif args.load_pretrained==0:
         #latent space is a vector of length 100
         model=Sequential()
         n_nodes=int( int(args.image_height/args.gen_starting_fraction)*int(args.image_width/args.gen_starting_fraction)*args.generator_feature_space  )
         model.add(Dense(n_nodes,
                          input_dim=args.latent_dim,
-                         activation=args.activation,
+                         activation=args.activation
                          ))
 
         model.add(Reshape((int(args.image_height/args.gen_starting_fraction),int(args.image_width/args.gen_starting_fraction),args.generator_feature_space)))
@@ -192,7 +226,7 @@ def summarize_performance(epoch, g_model, d_model, dataset, latent_dim, n_sample
     
     return acc_real,acc_fake
     
-def save_plot(xinput,G,epoch, n=5):
+def save_plot(args,xinput,G,epoch, n=5):
     
     #xinput is input latent space
     #G is generator
@@ -211,7 +245,7 @@ def save_plot(xinput,G,epoch, n=5):
             axs[i,j].imshow(x_fake[count, :, :, 0])
     # save plot to file
     plt.subplots_adjust(wspace=0.01,hspace=0.01)
-    filename = './plots/generated_plot_e%03d.png' % (epoch)
+    filename = args.plots_dir+'generated_plot_e%03d.png' % (epoch)
     plt.savefig(filename,bbox_inches='tight')
     plt.close()
     
@@ -350,14 +384,14 @@ def execute_exp(args):
             acc_real,acc_fake=summarize_performance(i+1, G, D, ins, args.latent_dim)
             accs_real.append(acc_real*100)
             accs_fake.append(acc_fake*100)
-            save_plot(xinput,G,i+1)
+            save_plot(args,xinput,G,i+1)
             
         if i+1 in args.checkpoints:
             # save the generator model tile file
-            filename = './results/%s_G_epoch_%03d.h5' % (fbase,i+1)
+            filename = args.results_dir+'%s_G_epoch_%03d.h5' % (fbase,i+1)
             G.save(filename)
             
-            filename = './results/%s_D_epoch_%03d.h5' % (fbase,i+1)
+            filename = args.results_dir+'%s_D_epoch_%03d.h5' % (fbase,i+1)
             D.save(filename)
             
             #write out results at each checkpoint too
@@ -373,7 +407,7 @@ def execute_exp(args):
     
             #Save results
             results['fname_base']=fbase
-            fp=open("./results/%s_results_e%03d.pkl" % (fbase,i+1),'wb')
+            fp=open(args.results_dir+"%s_results_e%03d.pkl" % (fbase,i+1),'wb')
             pickle.dump(results,fp)
             fp.close()
     
@@ -386,6 +420,7 @@ def create_parser():
     parser.add_argument('-image_width',type=int,default=96,help='Number of Columns in the image')
     parser.add_argument('-num_channels',type=int,default=4,help='Number of Image Channels')
     parser.add_argument('-filters',nargs='+',type=int,default=[64,64],help='List of Conv filters for Discriminator')
+    parser.add_argument('-hidden',nargs='+',type=int,default=[64,16],help='List of Hidden nodes for Discriminator')
     parser.add_argument('-disc_h_strides',nargs='+',type=int,default=[12,2],help="list of strides for discriminator's conv layers")
     parser.add_argument('-disc_w_strides',nargs='+',type=int,default=[2,12],help="list of strides for discriminator's conv layers")
     parser.add_argument('-activation',type=str,default='elu',help='Activation of Nodes and Filters')
@@ -413,6 +448,14 @@ def create_parser():
     parser.add_argument('-pretrained_gen_name',type=str,default='ConvGan_fifths_Gstrides_12_2_Dstrides_12_2_G_epoch_150.h5',help='name of h5 file for generator')
     parser.add_argument('-pretrained_disc_name',type=str,default='ConvGan_fifths_Gstrides_12_2_Dstrides_12_2_D_epoch_150.h5',help='name of h5 file for discriminator')
     
+    #for nonsquare generator starting image
+    parser.add_argument('-gen_nonsquare_start',type=int,default=0,help='1 if low-dim generator starting space is nonsquare')
+    parser.add_argument('-gen_starting_h',type=int,default=4,help='initial image size of generator starting space')
+    parser.add_argument('-gen_starting_w',type=int,default=12,help='initial image size of generator starting space')
+    
+    parser.add_argument('-plots_dir',type=str,default='./plots/',help='directory for plotting files')
+    parser.add_argument('-results_dir',type=str,default='./results/',help='directory for results')
+    
     return parser
 
 def check_args(args):
@@ -429,14 +472,25 @@ def check_args(args):
     assert( (args.image_width/args.gen_starting_fraction)%1==0),'generator low res starting size must be an integer'
     
     #make sure the output for the generator is the right size
-    initial_image_size=args.image_height/args.gen_starting_fraction
-    final_image_height=initial_image_size
-    final_image_width=initial_image_size
-    for i in range(len(args.gen_h_strides)):
-        final_image_height*=args.gen_h_strides[i]
-        final_image_width*=args.gen_w_strides[i]
-    assert(final_image_height==args.image_height),"Generator must output images that are the same size as real images"
-    assert(final_image_width==args.image_width),"Generator must output images that are the same size as real images"
+    
+    if args.gen_nonsquare_start!=1:
+        initial_image_size=args.image_height/args.gen_starting_fraction
+        final_image_height=initial_image_size
+        final_image_width=initial_image_size
+        for i in range(len(args.gen_h_strides)):
+            final_image_height*=args.gen_h_strides[i]
+            final_image_width*=args.gen_w_strides[i]
+        assert(final_image_height==args.image_height),"Generator must output images that are the same size as real images"
+        assert(final_image_width==args.image_width),"Generator must output images that are the same size as real images"
+    elif args.gen_nonsquare_start==1:
+        h_size=args.gen_starting_h
+        w_size=args.gen_starting_w
+        for i in range(len(args.gen_h_strides)):
+            h_size*=args.gen_h_strides[i]
+            w_size*=args.gen_w_strides[i]
+        assert(h_size==args.image_height),"Generator must output images that are the same size as real images"
+        assert(w_size==args.image_width),"Generator must output images that are the same size as real images"
+            
     assert(len(args.gen_h_strides)==len(args.gen_h_kernels)),"Generator stride vector must be same length as kernel vector"
     assert(len(args.gen_w_strides)==len(args.gen_w_kernels)),"Generator stride vector must be same length as kernel vector"
     assert(len(args.gen_h_strides)==len(args.gen_w_strides)),"Generator height and width stride vectors must be same length"
