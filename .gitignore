@@ -11,3 +11,5 @@ ConvGan/plots/
 ConvGan/plots_linear/
 ConvGan/results/
 ConvGan/results_linear/
+ConvGan/plots*
+*.png
