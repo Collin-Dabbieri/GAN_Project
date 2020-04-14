@@ -13,3 +13,4 @@ ConvGan/results/
 ConvGan/results_linear/
 ConvGan/plots*
 *.png
+*.h5
