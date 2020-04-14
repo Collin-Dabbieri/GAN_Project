@@ -12,5 +12,12 @@ ConvGan/plots_linear/
 ConvGan/results/
 ConvGan/results_linear/
 ConvGan/plots*
+ConvGan/results*
+ConvGan/presentation/
 *.png
 *.h5
+*.pdf
+*.gif
+*stderr.txt
+*stdout.txt
+*.mid
