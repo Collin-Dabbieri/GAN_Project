@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import tensorflow as tf
 import pickle
-from tensorflow.keras.layers import InputLayer, Dense, LSTM, Dropout, Activation, Conv2D, Flatten, Reshape, Conv2DTranspose,MaxPooling2D
+from tensorflow.keras.layers import InputLayer, Dense, LSTM, Dropout, Activation, Conv2D, Flatten, Reshape, Conv2DTranspose,MaxPooling2D, BatchNormalization
 from tensorflow.keras.models import Sequential, load_model
 import argparse
 
@@ -17,7 +17,16 @@ plt.rcParams['figure.figsize']=(10,10)
 plt.rcParams['font.size']=FONTSIZE
 
 
+## from https://towardsdatascience.com/drawing-architecure-building-deep-convolutional-gans-in-pytorch-5ed60348d43c
+# "Batch normalization is used for every layer except the output layer for the generator and the input layer of the discriminator"
+# in https://arxiv.org/abs/1511.06434
+# they showed that batch norm "in the output layer in the generator and the input layer in the discriminator led to model instability 
+# and that is why batch norm is not used in those layers."
 
+# "Use ReLU in the generator except for the output which uses tanh. The symmetry of the tanh function allows 
+# the model to learn more quickly to saturate and cover the color space of the training distribution."
+
+# For this problem, adding Batch Normalization made it untrainable for some reason
 def build_discriminator(args):
     '''
     args for build_discriminator
@@ -69,20 +78,18 @@ def build_discriminator(args):
                                  name='DC'+str(i),
                                  kernel_regularizer=tf.keras.regularizers.l2(args.l2)
                                  ))
+                
+                #the discriminator gets batch normalization for every layer except the input layer
+                #model.add(BatchNormalization())
+                
             model.add(Dropout(args.dropout))
             
-            model.add(MaxPooling2D(pool_size=(2,2),
-                                   strides=(2,2),
-                                   padding='valid'))
+            #model.add(MaxPooling2D(pool_size=(2,2),
+                                   #strides=(2,2),
+                                   #padding='valid'))
 
         model.add(Flatten())
-        
-        for i in range(len(args.hidden)):
-            
-            model.add(Dense(args.hidden[i],
-                            activation=args.activation,
-                            kernel_regularizer=tf.keras.regularizers.l2(args.l2)))
-            model.add(Dropout(args.dropout))
+
         
         model.add(Dense(1,activation='sigmoid'))
         opt=tf.keras.optimizers.Adam(lr=args.lrate,beta_1=0.9,beta_2=0.999,epsilon=None,decay=0.0,amsgrad=False)
@@ -134,7 +141,10 @@ def build_generator(args):
                                       kernel_size=(args.gen_h_kernels[i],args.gen_w_kernels[i]),
                                       strides=(args.gen_h_strides[i],args.gen_w_strides[i]),
                                       padding='same',
+                                      name='G'+str(i),
                                       activation=args.activation))
+            #model.add(BatchNormalization())
+            
         model.add(Conv2D(args.num_channels,(7,7),activation='sigmoid',padding='same'))
             
     elif args.load_pretrained==0:
@@ -156,6 +166,8 @@ def build_generator(args):
                                       padding='same',
                                       activation=args.activation
                                       ))
+            
+            #model.add(BatchNormalization())
 
         model.add(Conv2D(args.num_channels, (7,7), activation='sigmoid', padding='same'))
             
@@ -330,7 +342,6 @@ def execute_exp(args):
             
             #if loading pretrained weights, add starting boost factor from end of last run so loss doesn't immediately explode
             
-            
             #determine the boost factor for either the generator or discriminator depending on which has a higher recent loss
             if count>=10:
                 g_len=len(g_losses)
@@ -341,29 +352,33 @@ def execute_exp(args):
                 d_idxs=np.arange(d_len-10,d_len,step=1,dtype=np.int32)
                 d_loss_avg=np.average([d_losses[i][1] for i in d_idxs])  #average of last 10 loss values
                 
-                if g_loss_avg>d_loss_avg:
-                    #discriminator is winning
-                    disc_boost=int(1)
-                    
-                    if d_loss_avg<=0.1: #prevent huge boost values when one loss zeros out
-                        gen_boost=int(10)
-                    elif d_loss_avg>0.1:
-                        gen_boost=int(np.round(g_loss_avg/d_loss_avg,decimals=0))
-                elif d_loss_avg>g_loss_avg:
-                    #generator is winning
-                    gen_boost=int(1)
-                    
-                    if g_loss_avg<=0.1: #prevent huge boost values when one loss zeros out
-                        disc_boost=int(10)
-                    elif g_loss_avg>0.1:
-                        disc_boost=int(np.round(d_loss_avg/g_loss_avg,decimals=0))
                 
             elif count<10:
-                gen_boost=int(1)
+                g_loss_avg=np.average([g_losses[i][1] for i in range(len(g_losses))]) #average of all loss values
+                d_loss_avg=np.average([d_losses[i][1] for i in range(len(d_losses))]) #average of all loss values
+                
+
+            if count==0:
                 disc_boost=int(1)
+                gen_boost=int(1)
+                
+            elif g_loss_avg>=d_loss_avg:
+                #discriminator is winning
+                disc_boost=int(1)
+                gen_boost=min(int(10),int(np.round(g_loss_avg/d_loss_avg,decimals=0)))
+                    
+            elif g_loss_avg<d_loss_avg:
+                #generator is winning
+                gen_boost=int(1)
+                disc_boost=min(int(10),int(np.round(d_loss_avg/g_loss_avg,decimals=0)))
+                
                 
             disc_boosts.append(disc_boost)
             gen_boosts.append(gen_boost)
+            
+            print("Generator boost factor: "+str(gen_boost))
+            print("Discriminator boost factor: "+str(disc_boost))
+            
             
             for boost in range(disc_boost):
                 X_real, y_real = generate_real_samples(ins,half_batch)
@@ -396,6 +411,8 @@ def execute_exp(args):
             
             #write out results at each checkpoint too
             results={}
+            results['disc_summary']=D.summary()
+            results['gen_summary']=G.summary()
             results['args']=args
             results['disc_boost']=disc_boosts
             results['gen_boost']=gen_boosts
@@ -420,28 +437,27 @@ def create_parser():
     parser.add_argument('-image_width',type=int,default=96,help='Number of Columns in the image')
     parser.add_argument('-num_channels',type=int,default=4,help='Number of Image Channels')
     parser.add_argument('-filters',nargs='+',type=int,default=[64,64],help='List of Conv filters for Discriminator')
-    parser.add_argument('-hidden',nargs='+',type=int,default=[64,16],help='List of Hidden nodes for Discriminator')
-    parser.add_argument('-disc_h_strides',nargs='+',type=int,default=[12,2],help="list of strides for discriminator's conv layers")
-    parser.add_argument('-disc_w_strides',nargs='+',type=int,default=[2,12],help="list of strides for discriminator's conv layers")
+    parser.add_argument('-disc_h_strides',nargs='+',type=int,default=[2,2],help="list of strides for discriminator's conv layers")
+    parser.add_argument('-disc_w_strides',nargs='+',type=int,default=[2,2],help="list of strides for discriminator's conv layers")
     parser.add_argument('-activation',type=str,default='elu',help='Activation of Nodes and Filters')
-    parser.add_argument('-disc_h_kernels',nargs='+',type=int,default=[12,2],help="list of kernel sizes for discriminator's conv layers")
-    parser.add_argument('-disc_w_kernels',nargs='+',type=int,default=[2,12],help="list of kernel sizes for discriminator's conv layers")
+    parser.add_argument('-disc_h_kernels',nargs='+',type=int,default=[3,3],help="list of kernel sizes for discriminator's conv layers")
+    parser.add_argument('-disc_w_kernels',nargs='+',type=int,default=[3,3],help="list of kernel sizes for discriminator's conv layers")
     parser.add_argument('-l2',type=float,default=0.0001,help='l2 regularization value')
     parser.add_argument('-dropout',type=float,default=0.4,help='dropout probability')
     parser.add_argument('-verbose',type=int,default=1,help='verbosity of experiment')
     parser.add_argument('-lrate',type=float,default=0.001,help='learning rate')
-    parser.add_argument('-generator_feature_space',type=int,default=128,help='Number of Conv filters for generator layers')
-    parser.add_argument('-latent_dim',type=int,default=100,help='length of latent space for generator')
+    parser.add_argument('-generator_feature_space',type=int,default=64,help='Number of Conv filters for generator layers')
+    parser.add_argument('-latent_dim',type=int,default=10,help='length of latent space for generator')
     parser.add_argument('-gen_starting_fraction',type=int,default=24,help='low res starting image for generator will be this fraction of output image')
-    parser.add_argument('-gen_h_kernels',nargs='+',type=int,default=[12,2],help='list of height kernel sizes for generator convolutions')
-    parser.add_argument('-gen_w_kernels',nargs='+',type=int,default=[2,12],help='list of width kernel sizes for generator convolutions')
+    parser.add_argument('-gen_h_kernels',nargs='+',type=int,default=[3,3],help='list of height kernel sizes for generator convolutions')
+    parser.add_argument('-gen_w_kernels',nargs='+',type=int,default=[3,3],help='list of width kernel sizes for generator convolutions')
     parser.add_argument('-gen_h_strides',nargs='+',type=int,default=[12,2],help='list of height strides for generator convolutions')
-    parser.add_argument('-gen_w_strides',nargs='+',type=int,default=[2,12],help='list of width strides for generator convolutions')
+    parser.add_argument('-gen_w_strides',nargs='+',type=int,default=[2,4],help='list of width strides for generator convolutions')
     parser.add_argument('-premade_training',type=int,default=1,help='1 if premade data, 0 if making data here (not yet added)')
-    parser.add_argument('-fname_train',type=str,default='ins_convgan_final_fantasy.pkl',help='filename for ins')
+    parser.add_argument('-fname_train',type=str,default='ins_convgan_final_fantasy_fifths.pkl',help='filename for ins')
     parser.add_argument('-n_batch',type=int,default=64,help='number of samples per batch')
-    parser.add_argument('-n_epochs',type=int,default=500,help='number of training epochs')
-    parser.add_argument('-checkpoints',type=int,nargs='+',default=[1,10,100,250,500],help='list of epochs for saving model checkpoints')
+    parser.add_argument('-n_epochs',type=int,default=750,help='number of training epochs')
+    parser.add_argument('-checkpoints',type=int,nargs='+',default=[1,50,100,150,200,250,300,350,400,450,500,550,600,650,700,750],help='list of epochs for saving model checkpoints')
     parser.add_argument('-mapping',type=str,default='fifths',help='mapping of pitch to the y-axis (linear or fifths)')
     parser.add_argument('-plot_every',type=int,default=1,help='generate plots after every X epochs')
     parser.add_argument('-load_pretrained',type=int,default=0,help='1 if loading in pretrained models, 0 if not')
@@ -449,7 +465,7 @@ def create_parser():
     parser.add_argument('-pretrained_disc_name',type=str,default='ConvGan_fifths_Gstrides_12_2_Dstrides_12_2_D_epoch_150.h5',help='name of h5 file for discriminator')
     
     #for nonsquare generator starting image
-    parser.add_argument('-gen_nonsquare_start',type=int,default=0,help='1 if low-dim generator starting space is nonsquare')
+    parser.add_argument('-gen_nonsquare_start',type=int,default=1,help='1 if low-dim generator starting space is nonsquare')
     parser.add_argument('-gen_starting_h',type=int,default=4,help='initial image size of generator starting space')
     parser.add_argument('-gen_starting_w',type=int,default=12,help='initial image size of generator starting space')
     
