@@ -62,40 +62,48 @@ def build_critic(args):
     critic_kernels - list of kernel sizes for each conv layer of critic
     critic_strides - list of strides for each conv layer of critic
     '''
-    const = ClipConstraint(args.clip_weight)
-    init=RandomNormal(stddev=args.init_weight_sigma)
     
-    model=Sequential()
-    
-    input_shape=(args.image_height,args.image_width,args.num_channels)
-    
-    for i in range(len(args.critic_filters)):
-        if i==0: 
-            model.add(Conv2D(filters=args.critic_filters[i],
-                             kernel_size=(args.critic_kernels[i],args.critic_kernels[i]),
-                             strides=(args.critic_strides[i],args.critic_strides[i]),
-                             padding='valid',
-                             kernel_constraint=const,
-                             input_shape=input_shape,
-                             kernel_initializer=init,
-                             name='Critic_Conv_'+str(i+1)))
-            model.add(LeakyReLU(alpha=0.2))
-        else:
-            model.add(Conv2D(filters=args.critic_filters[i],
-                             kernel_size=(args.critic_kernels[i],args.critic_kernels[i]),
-                             strides=(args.critic_strides[i],args.critic_strides[i]),
-                             padding='valid',
-                             kernel_constraint=const,
-                             kernel_initializer=init,
-                             name='Critic_Conv_'+str(i+1)))
-            model.add(LeakyReLU(alpha=0.2))
-            
-    model.add(Flatten())
-    model.add(Dense(1,activation='linear',name='Critic_Output'))
-    # the critic has a linear activation function in the output to give a 'realness score' to the image
-    
-    opt = RMSprop(lr=args.lrate)
-    model.compile(loss=wasserstein_loss,optimizer=opt)
+    if not args.load_pretrained:
+        const = ClipConstraint(args.clip_weight)
+        init=RandomNormal(stddev=args.init_weight_sigma)
+
+        model=Sequential()
+
+        input_shape=(args.image_height,args.image_width,args.num_channels)
+
+        for i in range(len(args.critic_filters)):
+            if i==0: 
+                model.add(Conv2D(filters=args.critic_filters[i],
+                                 kernel_size=(args.critic_kernels[i],args.critic_kernels[i]),
+                                 strides=(args.critic_strides[i],args.critic_strides[i]),
+                                 padding='valid',
+                                 kernel_constraint=const,
+                                 input_shape=input_shape,
+                                 kernel_initializer=init,
+                                 name='Critic_Conv_'+str(i+1)))
+                model.add(LeakyReLU(alpha=0.2))
+            else:
+                model.add(Conv2D(filters=args.critic_filters[i],
+                                 kernel_size=(args.critic_kernels[i],args.critic_kernels[i]),
+                                 strides=(args.critic_strides[i],args.critic_strides[i]),
+                                 padding='valid',
+                                 kernel_constraint=const,
+                                 kernel_initializer=init,
+                                 name='Critic_Conv_'+str(i+1)))
+                model.add(LeakyReLU(alpha=0.2))
+
+        model.add(Flatten())
+        model.add(Dense(1,activation='linear',name='Critic_Output'))
+        # the critic has a linear activation function in the output to give a 'realness score' to the image
+
+        opt = RMSprop(lr=args.lrate)
+        model.compile(loss=wasserstein_loss,optimizer=opt)
+        
+    elif args.load_pretrained:
+        
+        model=load_model(args.pretrained_critic_name)
+        opt = RMSprop(lr=args.lrate)
+        model.compile(loss=wasserstein_loss,optimizer=opt)
     
     return model
 
@@ -109,40 +117,44 @@ def build_generator(args):
     generator_stride_height - list with heights of conv strides
     generator_stride_width - list with widths of conv strides
     '''
-    
-    init=RandomNormal(stddev=args.init_weight_sigma)
-    
-    model=Sequential()
-    
-    for i in range(len(args.generator_filters)):
+    if not args.load_pretrained:
+        init=RandomNormal(stddev=args.init_weight_sigma)
+
+        model=Sequential()
+
+        for i in range(len(args.generator_filters)):
+
+            if i==0:
+                #first we upsample the latent space to a single dense layer
+                n_nodes=args.generator_starting_shape[0]*args.generator_starting_shape[1]*args.generator_filters[i]
+                model.add(Dense(units=n_nodes,
+                                kernel_initializer=init,
+                                input_dim=args.latent_dim,
+                                name='Generator_Dense'))
+                model.add(LeakyReLU(alpha=0.2))
+                model.add(Reshape((args.generator_starting_shape[0],args.generator_starting_shape[1],args.generator_filters[i])))
+
+            else:
+                #kernel size should be a factor of the stride size
+                model.add(Conv2DTranspose(filters=args.generator_filters[i],
+                                          kernel_size=(args.generator_kernel_height[i-1],args.generator_kernel_width[i-1]),
+                                          strides=(args.generator_stride_height[i-1],args.generator_stride_width[i-1]),
+                                          padding='same',
+                                          kernel_initializer=init,
+                                          name='Generator_Conv_'+str(i)
+                                          ))
+                model.add(LeakyReLU(alpha=0.2))
+
+        #collapse it back to one image
+        model.add(Conv2D(filters=args.num_channels,
+                         kernel_size=(7,7),
+                         activation='tanh',
+                         padding='same',
+                         kernel_initializer=init))
         
-        if i==0:
-            #first we upsample the latent space to a single dense layer
-            n_nodes=args.generator_starting_shape[0]*args.generator_starting_shape[1]*args.generator_filters[i]
-            model.add(Dense(units=n_nodes,
-                            kernel_initializer=init,
-                            input_dim=args.latent_dim,
-                            name='Generator_Dense'))
-            model.add(LeakyReLU(alpha=0.2))
-            model.add(Reshape((args.generator_starting_shape[0],args.generator_starting_shape[1],args.generator_filters[i])))
-            
-        else:
-            #kernel size should be a factor of the stride size
-            model.add(Conv2DTranspose(filters=args.generator_filters[i],
-                                      kernel_size=(args.generator_kernel_height[i-1],args.generator_kernel_width[i-1]),
-                                      strides=(args.generator_stride_height[i-1],args.generator_stride_width[i-1]),
-                                      padding='same',
-                                      kernel_initializer=init,
-                                      name='Generator_Conv_'+str(i)
-                                      ))
-            model.add(LeakyReLU(alpha=0.2))
-            
-    #collapse it back to one image
-    model.add(Conv2D(filters=args.num_channels,
-                     kernel_size=(7,7),
-                     activation='tanh',
-                     padding='same',
-                     kernel_initializer=init))
+    elif args.load_pretrained:
+        
+        model=load_model(args.pretrained_gen_name)
     
     return model
 
@@ -188,9 +200,12 @@ def generate_filename(args):
         critic_filters_str+=str(i)
         critic_filters_str+='_'
         
-    critic_boost_str='Cboost_'+str(args.critic_boost)
+    critic_boost_str='Cboost_'+str(args.critic_boost)+'_'
+    
+    weight_clip_str='WeightClip_'+str(args.clip_weight)
+    
         
-    fbase='WassGan_'+args.mapping+'_'+gen_filters_str+critic_filters_str+gen_strides_str+critic_strides_str+critic_boost_str
+    fbase='WassGan_'+args.mapping+'_'+gen_filters_str+critic_filters_str+gen_strides_str+critic_strides_str+critic_boost_str+weight_clip_str
     
     return fbase
 
@@ -255,8 +270,8 @@ def plot_images(generator,latent_space,filename_base,epoch,args,n=5):
             axs[i,j].imshow(generated_plots[count, :, :, 0])
     #reduce space between plots
     plt.subplots_adjust(wspace=0.01,hspace=0.01)        
-    
-    epoch_str=str(epoch).zfill(3) #this turns 1 into 001
+    fig.suptitle('Epoch {:.0f}/{:.0f}'.format(epoch+1,args.epochs))
+    epoch_str=str(epoch+1).zfill(3) #this turns 1 into 001
     plot_path=args.plots_dir+filename_base+'_e_'+str(epoch_str)+'.png'
     plt.savefig(plot_path,bbox_inches='tight')
     plt.clf()
@@ -368,7 +383,7 @@ def create_parser():
     parser.add_argument('-plots_dir',type=str,default='./plots/',help='path to directory for plots')
     parser.add_argument('-results_dir',type=str,default='./results/',help='path to directory for results')
     parser.add_argument('-mapping',type=str,default='fifths',help='mapping of ins (linear or fifths)')
-    parser.add_argument('-checkpoints',nargs='+',type=int,default=[1,2,3,4,5,6,7,8,9,10,15,20,25,30,35,40],help='model checkpoints')
+    parser.add_argument('-checkpoints',nargs='+',type=int,default=[1,50,100,150,200,250,300,350,400,450,500,550,600,650,700,750],help='model checkpoints')
     
     #critic info
     parser.add_argument('-critic_filters',nargs='+',type=int,default=[64,64],help='number of filters in each conv layer of critic')
@@ -384,6 +399,11 @@ def create_parser():
     parser.add_argument('-generator_kernel_width',nargs='+',type=int,default=[2,4],help='list with widths of conv kernels')
     parser.add_argument('-generator_stride_height',nargs='+',type=int,default=[12,2],help='list with heights of conv strides')
     parser.add_argument('-generator_stride_width',nargs='+',type=int,default=[2,4],help='list with widths of conv strides')
+    
+    #load pretrained
+    parser.add_argument('-load_pretrained',default=False,help='Boolean for whether or not to load pretrained models')
+    parser.add_argument('-pretrained_critic_name',type=str,default='./results1/WassGan_fifths_Gfilters_48_48_48_Cfilters_64_64_Gstrides_12-2_2-4_Cstrides_2_2_Critic_epoch_750.h5',help='path for pretrained critic')
+    parser.add_argument('-pretrained_gen_name',type=str,default='./results1/WassGan_fifths_Gfilters_48_48_48_Cfilters_64_64_Gstrides_12-2_2-4_Cstrides_2_2_Gen_epoch_750.h5',help='path for pretrained generator')
     
     return parser
     
