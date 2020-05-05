@@ -14,6 +14,10 @@ ConvGan/results_linear/
 ConvGan/plots*
 ConvGan/results*
 ConvGan/presentation/
+WassGAN/plots_boost10_clip0.001/
+WassGAN/plots_boost10_clip0.1/
+ConvGAN/plots_nonsquare3/
+WassGAN/midis/
 *.png
 *.h5
 *.pdf
