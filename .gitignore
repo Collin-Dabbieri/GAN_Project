@@ -18,6 +18,7 @@ WassGAN/plots_boost10_clip0.001/
 WassGAN/plots_boost10_clip0.1/
 ConvGAN/plots_nonsquare3/
 WassGAN/midis/
+WassGAN/plots_boost5_clip0.01/
 *.png
 *.h5
 *.pdf
